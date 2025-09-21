@@ -1,0 +1,379 @@
+# Single-machine dev/production setup — React (static) + Node (pm2) + Python (gunicorn) + Redis + Postgres + Grafana + Jenkins behind nginx
+
+*(Copy this whole file into `setup.md` (or `.mf` if you meant that) — the big code blocks are copy/paste-ready.)*
+
+I kept this pragmatic and repeatable. Change the variables at the top of the script to match your paths/ports/user before running. The plan:
+
+* Serve React `build/` as the web root (`http://IP/`).
+* Proxy `http://IP/api/node/*` → Node app (pm2) on `127.0.0.1:3001`
+* Proxy `http://IP/api/py/*` → Python app (gunicorn) on `127.0.0.1:3002`
+* Proxy `http://IP/service/grafana/*` → Grafana on `127.0.0.1:3000` (Grafana configured for subpath)
+* Jenkins left on `http://IP:8080/` (default), accessible directly
+* Postgres on `5432`, Redis on `6379` (local)
+
+---
+
+## Assumptions & variables
+
+Edit these values if you want different locations/ports:
+
+```bash
+# ===== EDIT THESE BEFORE RUNNING =====
+SERVER_USER="$USER"                      # user that will own app files (e.g. "ubuntu" or your login)
+REACT_BUILD_SRC="/home/$SERVER_USER/my-react-app"   # local path of your React source (used to build)
+REACT_STATIC_ROOT="/var/www/react-app"   # nginx will serve this folder's build/
+NODE_APP_DIR="/var/www/node-app"         # node app root (pm2 will run it)
+PY_APP_DIR="/var/www/py-app"             # python app root (gunicorn)
+NODE_PORT=3001
+PY_PORT=3002
+GRAFANA_PORT=3000
+JENKINS_PORT=8080
+DB_NAME="appdb"
+DB_USER="appdbuser"
+DB_PASS="changeme"                       # CHANGE THIS to a strong password
+# =======================================
+```
+
+---
+
+## Quick service/port map (for your reference)
+
+* `http://IP/` → React (nginx static)
+* `http://IP/api/node/*` → Node @ `127.0.0.1:3001`
+* `http://IP/api/py/*` → Python @ `127.0.0.1:3002`
+* `http://IP/service/grafana/*` → Grafana @ `127.0.0.1:3000` (configured to serve from subpath)
+* `http://IP:8080/` → Jenkins (default)
+
+---
+
+## Full step-by-step (copy/paste safe bash script)
+
+> **Important:** review and edit the Assumptions & variables above before running this. Run as a user with `sudo` privileges.
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+# --------- Edit these to match your machine ----------
+SERVER_USER="${SERVER_USER:-$USER}"
+REACT_BUILD_SRC="${REACT_BUILD_SRC:-/home/$SERVER_USER/my-react-app}"
+REACT_STATIC_ROOT="${REACT_STATIC_ROOT:-/var/www/react-app}"
+NODE_APP_DIR="${NODE_APP_DIR:-/var/www/node-app}"
+PY_APP_DIR="${PY_APP_DIR:-/var/www/py-app}"
+NODE_PORT="${NODE_PORT:-3001}"
+PY_PORT="${PY_PORT:-3002}"
+GRAFANA_PORT="${GRAFANA_PORT:-3000}"
+JENKINS_PORT="${JENKINS_PORT:-8080}"
+DB_NAME="${DB_NAME:-appdb}"
+DB_USER="${DB_USER:-appdbuser}"
+DB_PASS="${DB_PASS:-changeme}"
+# ----------------------------------------------------
+
+echo "1) Update Ubuntu and install base packages"
+sudo apt update
+sudo apt -y upgrade
+sudo apt -y install curl wget git build-essential apt-transport-https ca-certificates gnupg lsb-release
+
+echo "2) Install nginx"
+sudo apt -y install nginx
+sudo systemctl enable --now nginx
+
+echo "3) Install Node.js (LTS) and pm2"
+curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash -
+sudo apt -y install nodejs
+sudo npm install -g pm2
+# ensure pm2 will resurrect after reboot
+sudo pm2 startup systemd -u "$SERVER_USER" --hp "/home/$SERVER_USER" || true
+
+echo "4) Install Python, venv and pip"
+sudo apt -y install python3 python3-venv python3-pip
+
+echo "5) Install Postgres"
+sudo apt -y install postgresql postgresql-contrib
+sudo systemctl enable --now postgresql
+
+echo "Create DB and user (Postgres)"
+sudo -u postgres psql -v ON_ERROR_STOP=1 <<-SQL
+CREATE DATABASE ${DB_NAME};
+CREATE USER ${DB_USER} WITH ENCRYPTED PASSWORD '${DB_PASS}';
+GRANT ALL PRIVILEGES ON DATABASE ${DB_NAME} TO ${DB_USER};
+SQL
+
+echo "6) Install Redis"
+sudo apt -y install redis-server
+sudo systemctl enable --now redis-server
+
+echo "7) Install Grafana (apt repo)"
+# add grafana apt repo
+sudo wget -q -O - https://packages.grafana.com/gpg.key | sudo apt-key add -
+echo "deb https://packages.grafana.com/oss/deb stable main" | sudo sudo tee /etc/apt/sources.list.d/grafana.list
+sudo apt update
+sudo apt -y install grafana
+sudo systemctl enable --now grafana-server
+
+echo "Configure Grafana to serve from subpath /service/grafana"
+# Add minimal config lines (appends - safe)
+sudo bash -c 'cat >> /etc/grafana/grafana.ini <<EOF
+[server]
+# When using a reverse proxy to provide Grafana under a subpath, set root_url and enable serve_from_sub_path
+root_url = %(protocol)s://%(domain)s:%(http_port)s/service/grafana
+serve_from_sub_path = true
+http_addr = 127.0.0.1
+http_port = '"${GRAFANA_PORT}"'
+EOF'
+sudo systemctl restart grafana-server
+
+echo "8) Install Java + Jenkins"
+sudo apt -y install openjdk-11-jre
+wget -q -O - https://pkg.jenkins.io/debian-stable/jenkins.io.key | sudo apt-key add -
+sudo sh -c 'echo deb https://pkg.jenkins.io/debian-stable binary/ > /etc/apt/sources.list.d/jenkins.list'
+sudo apt update
+sudo apt -y install jenkins
+sudo systemctl enable --now jenkins
+
+echo "9) Create directories for apps and set ownership"
+sudo mkdir -p "$REACT_STATIC_ROOT"
+sudo mkdir -p "$NODE_APP_DIR"
+sudo mkdir -p "$PY_APP_DIR"
+sudo chown -R "$SERVER_USER":"$SERVER_USER" "$REACT_STATIC_ROOT" "$NODE_APP_DIR" "$PY_APP_DIR"
+sudo chmod -R 755 "$REACT_STATIC_ROOT" "$NODE_APP_DIR" "$PY_APP_DIR"
+
+echo "10) Build React app and install Node app (you must have your sources in REACT_BUILD_SRC and NODE_APP_DIR)"
+if [ -d "$REACT_BUILD_SRC" ]; then
+  echo "Building React app from $REACT_BUILD_SRC"
+  cd "$REACT_BUILD_SRC"
+  npm ci
+  npm run build
+  sudo rm -rf "${REACT_STATIC_ROOT:?}"/*
+  sudo cp -r build/* "$REACT_STATIC_ROOT"/
+  sudo chown -R "$SERVER_USER":www-data "$REACT_STATIC_ROOT"
+else
+  echo "React source not found at $REACT_BUILD_SRC — skipping build. Put your build files into $REACT_STATIC_ROOT manually."
+fi
+
+if [ -d "$NODE_APP_DIR" ]; then
+  echo "Installing Node app deps in $NODE_APP_DIR"
+  cd "$NODE_APP_DIR"
+  npm ci || echo "npm ci failed — make sure package.json exists"
+  # Example: ensure your Node server reads PORT from env or use PORT fallback
+  cat > "$NODE_APP_DIR/ecosystem.config.js" <<'EOL'
+module.exports = {
+  apps: [
+    {
+      name: "node-api",
+      cwd: process.cwd(),
+      script: "index.js",         // change if your entry is different (e.g. dist/index.js)
+      env: {
+        NODE_ENV: "production",
+        PORT: process.env.PORT || 3001
+      }
+    }
+  ]
+};
+EOL
+  pm2 start "$NODE_APP_DIR/ecosystem.config.js" --update-env || pm2 restart ecosystem.config.js || echo "pm2 start failed"
+  pm2 save
+else
+  echo "Node app directory $NODE_APP_DIR not present — add your node code there and run pm2 start /ecosystem"
+fi
+
+echo "11) Python app: create venv and systemd unit"
+if [ -f "$PY_APP_DIR/requirements.txt" ]; then
+  cd "$PY_APP_DIR"
+  python3 -m venv venv
+  . venv/bin/activate
+  pip install --upgrade pip
+  pip install -r requirements.txt
+  deactivate
+
+  # Create a systemd service (assumes your app exposes a WSGI callable `app` in wsgi.py)
+  sudo bash -c "cat > /etc/systemd/system/pyapp.service" <<EOF
+[Unit]
+Description=Gunicorn instance to serve python app
+After=network.target
+
+[Service]
+User=${SERVER_USER}
+Group=${SERVER_USER}
+WorkingDirectory=${PY_APP_DIR}
+Environment=\"PATH=${PY_APP_DIR}/venv/bin\"
+ExecStart=${PY_APP_DIR}/venv/bin/gunicorn --workers 3 --bind 127.0.0.1:${PY_PORT} wsgi:app
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+  sudo systemctl daemon-reload
+  sudo systemctl enable --now pyapp.service
+else
+  echo "No requirements.txt in $PY_APP_DIR — please place your python app and requirements.txt into $PY_APP_DIR and run setup for venv"
+fi
+
+echo "12) Nginx configuration: reverse proxy for /api/node, /api/py, /service/grafana and serve React static"
+sudo bash -c 'cat > /etc/nginx/sites-available/react_node.conf' <<'NGINX'
+server {
+    listen 80 default_server;
+    listen [::]:80 default_server;
+    server_name _;
+
+    root '"${REACT_STATIC_ROOT}"';
+    index index.html index.htm;
+
+    # React SPA: fallback to index.html
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+
+    # Node API
+    location /api/node/ {
+        proxy_pass http://127.0.0.1:'"${NODE_PORT}"';
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_cache_bypass $http_upgrade;
+    }
+
+    # Python API
+    location /api/py/ {
+        proxy_pass http://127.0.0.1:'"${PY_PORT}"';
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    # Grafana on subpath /service/grafana
+    location /service/grafana/ {
+        proxy_pass http://127.0.0.1:'"${GRAFANA_PORT}"';
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+    }
+
+    # Optional: deny access to .env, .git, etc
+    location ~ /\. {
+        deny all;
+    }
+}
+NGINX
+
+sudo ln -sf /etc/nginx/sites-available/react_node.conf /etc/nginx/sites-enabled/react_node.conf
+sudo nginx -t
+sudo systemctl reload nginx
+
+echo "13) UFW (firewall) — allow only necessary ports"
+sudo apt -y install ufw
+sudo ufw allow OpenSSH
+sudo ufw allow 'Nginx Full'   # 80 and 443 (443 only if you later add certs)
+sudo ufw allow ${JENKINS_PORT}/tcp
+sudo ufw --force enable
+
+echo "14) Finalize pm2 startup (run the command that was suggested earlier)"
+# Ensure pm2 startup script is registered to run at boot:
+sudo pm2 startup systemd -u "$SERVER_USER" --hp "/home/$SERVER_USER" || true
+pm2 save
+
+echo "=== DONE ==="
+echo "Check services: systemctl status nginx postgresql redis-server grafana-server jenkins pyapp || true"
+echo "Check pm2: pm2 list"
+echo "If React didn't auto-build, copy your React build files into $REACT_STATIC_ROOT and chown to $SERVER_USER:www-data"
+```
+
+---
+
+## Example `ecosystem.config.js` for Node (if you prefer single file)
+
+```js
+module.exports = {
+  apps: [
+    {
+      name: "node-api",
+      cwd: "/var/www/node-app",
+      script: "index.js",
+      env: {
+        NODE_ENV: "production",
+        PORT: 3001
+      }
+    }
+  ]
+};
+```
+
+Start with:
+
+```bash
+cd /var/www/node-app
+npm ci
+pm2 start ecosystem.config.js
+pm2 save
+```
+
+---
+
+## Example Python `wsgi.py` (very small Flask example)
+
+Place this into `$PY_APP_DIR/wsgi.py`:
+
+```python
+from flask import Flask, jsonify
+app = Flask(__name__)
+
+@app.route("/api/py/hello")
+def hello():
+    return jsonify({"msg":"hello from python"})
+
+# for gunicorn:  gunicorn --bind 127.0.0.1:3002 wsgi:app
+```
+
+Then create `requirements.txt` with:
+
+```
+Flask
+gunicorn
+```
+
+---
+
+## Notes & gotchas (read these!)
+
+* **React SPA routing**: `try_files ... /index.html` ensures client-side routes work. Ensure your React app uses BrowserRouter with correct `basename` if needed.
+* **Node app port**: Make your Node server read `process.env.PORT || 3001`.
+* **Python app**: Systemd unit assumes `wsgi:app` entrypoint. Adjust `ExecStart` if your app is different (e.g., uvicorn for FastAPI: `uvicorn main:app --host 127.0.0.1 --port 3002`).
+* **Grafana subpath**: We appended config to `/etc/grafana/grafana.ini`. If Grafana is later upgraded, re-check `serve_from_sub_path` and `root_url`. Grafana must be told that it is being served under `/service/grafana`. After changes: `sudo systemctl restart grafana-server`.
+* **Jenkins access**: Jenkins runs on `:8080` — it's left unproxied per your request. For production, you may want to reverse-proxy it too and secure with auth/HTTPS.
+* **Security**: This guide uses `ufw` and binds services to `127.0.0.1` where appropriate. For production, add HTTPS (certbot/Let's Encrypt) and secure Jenkins/Grafana with proper auth.
+* **pm2 persistence**: `pm2 save` + `pm2 startup` ensures pm2 processes restart on reboot. The script attempts to register the startup for your `$SERVER_USER`.
+* **Permissions**: nginx runs as `www-data`. We chown app folders to your user so you can deploy easily; adjust ownership if you prefer `www-data`.
+* **Backups & monitoring**: Consider regular DB backups, log rotation, and monitoring (Prometheus/Grafana, node exporters) for production.
+
+---
+
+## Useful commands (one-liners)
+
+* Test Nginx config: `sudo nginx -t && sudo systemctl reload nginx`
+* Tail a systemd service: `sudo journalctl -u pyapp -f`
+* PM2 logs: `pm2 logs node-api`
+* Restart node app: `pm2 restart node-api`
+* Show pg users/dbs: `sudo -u postgres psql -c "\l"` and `sudo -u postgres psql -c "\du"`
+
+---
+
+## Wrap-up (tiny pep talk)
+
+You now have a single-machine architecture with nginx as the front door and app backends on different local ports. The pattern is simple and reliable:
+
+* static files → nginx
+* SPA calls `/api/*` → nginx proxies to local process (node/gunicorn)
+* privileged admin apps like Grafana/Jenkins can be proxied or exposed on separate ports
+
+Tweak the script, then run it. If anything trips up, paste the failing command output and I’ll help debug — no mysticism, just logs and methodical fixes. 🛠️
+# Happy coding!

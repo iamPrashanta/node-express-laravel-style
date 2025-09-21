@@ -1,0 +1,56 @@
+npm install -g pm2
+sudo systemctl reload nginx
+
+
+pm2 restart prash-app-node
+
+
+
+# Start your app in the background
+pm2 start index.js --name prash-app-node
+
+# Check running apps
+pm2 list
+
+# View logs (live tail)
+pm2 logs prash-app-node
+
+# Restart after code changes
+pm2 restart prash-app-node
+
+# Stop app
+pm2 stop prash-app-node
+
+# Delete app
+pm2 delete prash-app-node
+
+
+
+
+# Make pm2 auto-start on server reboot
+pm2 startup
+
+# It will print a command — copy/paste it. Then: 
+pm2 save
+
+
+# Bonus: watching files during dev
+pm2 start index.js --name prash-app-node --watch
+
+
+
+
+
+# Check if Node is alive on port 4001
+sudo lsof -i:4001
+# or
+netstat -tulnp | grep 4001
+
+
+
+
+
+
+
+
+
