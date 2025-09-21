@@ -1,0 +1,65 @@
+{
+  "compilerOptions": {
+    "module": "NodeNext",
+    "moduleResolution": "nodenext",
+    "target": "ES2020",
+    "lib": ["ES2020"], 
+
+    /* Interop / Imports */
+    "esModuleInterop": true,              // Enables `import express from "express"`
+    "allowSyntheticDefaultImports": true, // Makes default imports smoother
+    // "allowImportingTsExtensions": true,   // Allow importing .ts files with extensions
+    "resolveJsonModule": true,            // Allow importing .json files directly
+    "allowJs": true,                      // Allow mixing .js and .ts files
+    "checkJs": false,                     // Don’t type-check .js files
+
+     /* Strictness */
+    "strict": true,                       // All strict type checks
+    "skipLibCheck": true,                 // Skip type checks for node_modules
+    "forceConsistentCasingInFileNames": true,
+    // "ignoreDeprecations": "6.0",           // Silence deprecated options for TypeScript 6.x
+    /* Output */
+    "outDir": "dist",                     // Where compiled files go
+    "rootDir": "src",                     // Ensure TS knows entry directory
+
+    "baseUrl": "./src",
+    "paths": {
+      "@user.routes": ["modules/user/routes/index.ts"],
+      "@user.routes/*": ["modules/user/routes/*"],
+
+      "@admin.routes": ["modules/admin/routes/index.ts"],
+      "@admin.routes/*": ["modules/admin/routes/*"],
+
+      "@user.controllers/*": ["modules/user/controllers/*"],
+      "@admin.controllers/*": ["modules/admin/controllers/*"],
+
+      "@migrations/*": ["infrastructure/database/migrations/*"],
+      "@seeds/*": ["infrastructure/database/seeds/*"],
+      "@tests/*": ["infrastructure/database/tests/*"],
+      "@monitoring/*": ["infrastructure/monitoring/*"],
+      "@cache/*": ["infrastructure/cache/*"],
+      "@storage/*": ["infrastructure/storage/*"],
+
+      "@middleware/*": ["core/middleware/*"],
+      "@utils/*": ["core/utils/*"],
+      "@utils": ["core/utils/index"],
+      "@errors/*": ["core/errors/*"],
+      "@config/*": ["core/config/*"],
+      "@models/*": ["core/common/models/*"],
+      "@helpers/*": ["core/common/helpers/*"],
+      "@services/*": ["core/common/services/*"],
+      "@constants/*": ["core/constants/*"],
+
+      "@validators/*": ["interfaces/validators/*"],
+      "@graphql/*": ["interfaces/graphql/*"],
+      "@dtos/*": ["interfaces/dtos/*"],
+
+      "@logs/*": ["../logs/*"]
+    }
+  },
+  "tsc-alias": {
+    "resolveFullPaths": true
+  },
+  "include": ["src", "src/types"],
+  "exclude": ["node_modules", "dist"]
+}
