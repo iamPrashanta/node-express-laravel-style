@@ -1,0 +1,13 @@
+services:
+  ubuntu-web:
+    build: .
+    container_name: ubuntu-web
+    tty: true   # keep interactive shell open
+    stdin_open: true
+    # volumes:
+      # - C:\Users\prash\OneDrive\Desktop\multi-backend-unpay:/workspace   # maps your Windows folder into /workspace
+    ports:
+      - "5173:5173"         # expose React app port to localhost:5173
+      - "4001:4001"         # Node Express
+      - "5000:5000"         # Python Flask
+      - "80:80"       # Nginx default HTTP
