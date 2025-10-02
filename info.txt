@@ -1,0 +1,221 @@
+# Enter container
+docker compose run --rm ubuntu-web bash
+
+
+
+# Backend
+cd /var/www/website.com/backend/node-express
+npm install
+node index.js  # 4001
+
+cd /var/www/website.com/backend/python-flask
+pip install -r requirements.txt
+python3 app.py  # 5000
+
+# Frontend
+cd /var/www/website.com/frontend/react-app
+npm install
+npm start       # 3000
+
+# Optional: run Nginx to serve static files
+service nginx start
+
+
+
+
+
+######################################################
+
+# -p for ports
+docker compose up -d        # start all services
+docker exec -it ubuntu-web bash  # attach shell to running container
+
+
+
+
+######################################################
+
+Perfect. Let’s set up a **complete Linux learning workflow** inside your Docker container using `/var/www/website.com`, so you can practice permissions, groups, processes, and run your full multi-backend stack.
+
+---
+
+## **Step 1: Start the container**
+
+```bash
+# Start container in detached mode
+docker compose up -d
+```
+
+* Your container `ubuntu-web` is now running.
+* Ports 3000 (React), 4001 (Node), 5000 (Python), 80 (Nginx) are mapped.
+
+---
+
+## **Step 2: Enter the container**
+
+```bash
+docker exec -it ubuntu-web bash
+```
+
+* You are now inside **Ubuntu Linux**.
+* Prompt looks like: `root@<container-id>:/var/www/website.com#`
+
+---
+
+## **Step 3: Verify folder structure and permissions**
+
+```bash
+cd /var/www/website.com
+ls -l
+```
+
+Expected output:
+
+```
+drwxr-xr-x  3 www-data www-data 4096 Oct  2 11:00 backend
+drwxr-xr-x  3 www-data www-data 4096 Oct  2 11:00 frontend
+```
+
+* `www-data:www-data` → owner and group
+* `755` permissions → safe for web content
+
+---
+
+## **Step 4: Explore Linux basics (optional learning)**
+
+```bash
+# Check disk usage
+df -h
+
+# See current processes
+ps aux
+
+# Check network ports
+netstat -tuln
+
+# Change ownership of a file/folder
+chown www-data:www-data backend/node-express
+
+# Change permissions
+chmod 755 frontend/react-app
+```
+
+---
+
+## **Step 5: Install project dependencies inside container**
+
+### **Node / Express**
+
+```bash
+cd /var/www/website.com/backend/node-express
+npm install
+```
+
+### **Python / Flask**
+
+```bash
+cd /var/www/website.com/backend/python-flask
+pip install -r requirements.txt
+```
+
+### **React frontend**
+
+```bash
+cd /var/www/website.com/frontend/react-app
+npm install
+```
+
+---
+
+## **Step 6: Run servers inside container**
+
+* **React dev server** (port 3000):
+
+```bash
+npm start
+```
+
+* **Node API** (port 4001):
+
+```bash
+node index.js
+```
+
+* **Python Flask API** (port 5000):
+
+```bash
+python3 app.py
+```
+
+* **Optional: Nginx** (to serve static frontend or reverse proxy):
+
+```bash
+service nginx start
+```
+
+* Access React app at `http://localhost:3000`
+* Node API at `http://localhost:4001`
+* Python API at `http://localhost:5000`
+* Nginx default site at `http://localhost`
+
+---
+
+## **Step 7: Linux permissions & groups practice**
+
+* Change group of backend to `www-data`:
+
+```bash
+chgrp -R www-data backend/
+```
+
+* Give owner full permissions, group read/execute:
+
+```bash
+chmod -R 750 backend/
+```
+
+* Check permissions:
+
+```bash
+ls -l
+```
+
+* Try creating files as different users (`root`, `www-data`) to see access control in action.
+
+---
+
+## **Step 8: Optional Nginx config for multi-backend**
+
+* React: `/var/www/website.com/frontend/react-app/build`
+* Node: `/var/www/website.com/backend/node-express`
+* Python: `/var/www/website.com/backend/python-flask`
+
+You can practice editing `/etc/nginx/sites-available/default` and linking to `sites-enabled`. After edits:
+
+```bash
+nginx -t   # test config
+service nginx reload
+```
+
+---
+
+## ✅ Key Takeaways for Learning Linux
+
+1. **Permissions**: Understand `chown`, `chmod`, `chgrp`
+2. **Processes**: Use `ps`, `top`, `kill` to manage Node/React/Python servers
+3. **Networking**: Use `netstat` or `ss` to see listening ports
+4. **File system hierarchy**: `/var/www`, `/etc/nginx`, `/usr/bin`, `/tmp`
+5. **Logs**: Learn to read logs from Nginx or backend apps inside `/var/log`
+6. **Users & groups**: Experiment with `www-data` vs `root` for security practice
+
+---
+
+If you want, I can **write a ready-to-use Nginx config** that:
+
+* Serves React on `/`
+* Node API on `/api/node/`
+* Python API on `/api/py/`
+
+This will make your container act almost like a **real production server**, perfect for Linux learning and testing multi-backend setups.
+
+Do you want me to do that next?
