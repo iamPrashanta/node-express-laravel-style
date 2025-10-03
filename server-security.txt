@@ -1,0 +1,70 @@
+Perfect — you want nginx to **restrict access to certain routes based on client IP**, while leaving the rest of your React app public. This is done using the `allow` / `deny` directives inside a `location` block.
+
+---
+
+### Example: Protect `/admin-login` route
+
+Assume the React route is `/admin-login`:
+
+```nginx
+location = /admin-login {
+    root /var/www/multi/frontend/react-app/dist;
+    index index.html;
+    try_files $uri /index.html;
+
+    # Restrict access
+    allow 203.0.113.25;    # your company IP
+    allow 198.51.100.42;   # another allowed IP
+    deny all;               # block everyone else
+}
+```
+
+**Explanation:**
+
+* `location = /admin-login` → exact match for `/admin-login`.
+* `allow` → whitelist specific IPs.
+* `deny all` → block everyone else.
+* `try_files $uri /index.html` → ensures React route still serves the SPA properly.
+
+---
+
+### If you have subroutes under `/admin-login/*`
+
+```nginx
+location ^~ /admin-login/ {
+    root /var/www/multi/frontend/react-app/dist;
+    index index.html;
+    try_files $uri /index.html;
+
+    # IP restriction
+    allow 203.0.113.25;
+    deny all;
+}
+```
+
+`^~` ensures nginx matches all paths under `/admin-login/` and doesn’t pass them to the generic `/` React handler.
+
+---
+
+### Notes
+
+1. React itself can’t enforce IP restrictions because it’s client-side. **You must block at nginx**.
+2. You can mix this with your existing React catch-all:
+
+```nginx
+location / {
+    root /var/www/multi/frontend/react-app/dist;
+    index index.html;
+    try_files $uri /index.html;
+}
+```
+
+nginx will prefer the more specific `/admin-login` block before falling back to `/`.
+
+---
+
+This approach also works if you want to **protect multiple routes**, just create a `location` block for each one with `allow` / `deny`.
+
+---
+
+If you want, I can give you a **ready-to-paste snippet** showing **React public routes, admin route restricted to specific IPs, Node/Flask APIs**, all in one nginx config. It will save mistakes in matching routes.
