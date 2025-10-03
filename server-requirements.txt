@@ -1,0 +1,187 @@
+## 1. Install dependencies
+
+Update system and install nginx:
+
+```bash
+sudo apt update && sudo apt upgrade -y
+sudo apt install nginx -y
+```
+
+Make sure nginx is running:
+
+```bash
+systemctl status nginx
+```
+
+---
+
+## 2. Directory structure
+
+Let’s assume this:
+
+* React build at: `/var/www/multi/frontend/react-app/dist`
+* Node app running on port `4001`
+* Flask app running on port `5000`
+
+(You can of course change the paths.)
+
+---
+
+## 3. Create a new nginx config
+
+Make a new site config file for your domain, e.g. `app.unpay.in`:
+
+```bash
+sudo nano /etc/nginx/sites-available/app.unpay.in
+```
+
+Paste this:
+
+```nginx
+server {
+    listen 80;
+    server_name app.unpay.in www.app.unpay.in;
+
+    # React frontend
+    root /var/www/multi/frontend/react-app/dist;
+    index index.html;
+
+    location / {
+        try_files $uri /index.html;
+    }
+
+    # Node backend API
+    location /api/node/ {
+        proxy_pass http://127.0.0.1:4001/;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_cache_bypass $http_upgrade;
+    }
+
+    # Python Flask API
+    location /api/py/ {
+        proxy_pass http://127.0.0.1:5000/;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    }
+
+    # Optional: Grafana (if installed on port 3000)
+    location /service/grafana/ {
+        proxy_pass http://127.0.0.1:3000/;
+        proxy_set_header Host $host;
+    }
+
+    error_log /var/log/nginx/app.unpay.in.error.log;
+    access_log /var/log/nginx/app.unpay.in.access.log;
+}
+```
+
+Save & exit.
+
+---
+
+## 4. Enable the site
+
+```bash
+sudo ln -s /etc/nginx/sites-available/app.unpay.in /etc/nginx/sites-enabled/
+```
+
+Check syntax and reload:
+
+```bash
+sudo nginx -t
+sudo systemctl reload nginx
+```
+
+Now `http://your-server-ip/` should serve React, and `http://your-server-ip/api/node/...` should talk to Node, `.../api/py/...` to Flask.
+
+---
+
+## 5. SSL (HTTPS)
+
+Install certbot and get a free Let’s Encrypt SSL:
+
+```bash
+sudo apt install certbot python3-certbot-nginx -y
+sudo certbot --nginx -d app.unpay.in -d www.app.unpay.in
+```
+
+This will edit your nginx config to add HTTPS automatically.
+
+---
+
+## 6. Keep Node and Python running in the background
+
+Without Plesk, you need a **process manager**. Use `systemd` (native) or `pm2` (common for Node).
+
+**Node systemd service (`/etc/systemd/system/nodeapp.service`):**
+
+```ini
+[Unit]
+Description=Node.js API
+After=network.target
+
+[Service]
+ExecStart=/usr/bin/node /var/www/multi/backend/node-app/index.js
+WorkingDirectory=/var/www/multi/backend/node-app
+Restart=always
+User=www-data
+Environment=NODE_ENV=production
+StandardOutput=syslog
+StandardError=syslog
+SyslogIdentifier=nodeapp
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Enable it:
+
+```bash
+sudo systemctl enable nodeapp
+sudo systemctl start nodeapp
+```
+
+**Flask systemd service (`/etc/systemd/system/flaskapp.service`):**
+
+```ini
+[Unit]
+Description=Flask API
+After=network.target
+
+[Service]
+ExecStart=/usr/bin/python3 /var/www/multi/backend/flask-app/app.py
+WorkingDirectory=/var/www/multi/backend/flask-app
+Restart=always
+User=www-data
+Environment=FLASK_ENV=production
+StandardOutput=syslog
+StandardError=syslog
+SyslogIdentifier=flaskapp
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Enable it:
+
+```bash
+sudo systemctl enable flaskapp
+sudo systemctl start flaskapp
+```
+
+Now both services will run on startup and stay alive.
+
+---
+
+## 7. Logs
+
+* Nginx logs: `/var/log/nginx/`
+* Node logs: `journalctl -u nodeapp -f`
+* Flask logs: `journalctl -u flaskapp -f`
+
