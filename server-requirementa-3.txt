@@ -1,0 +1,116 @@
+Perfect — a Kafka cluster is blind without a UI, and Kafdrop (or its fancier cousin Kafka UI) is the “binoculars.” Let’s wire it up so you can see topics, partitions, brokers, and messages directly in your browser behind nginx, just like Grafana.
+
+---
+
+## 1. Download & run Kafdrop
+
+Kafdrop is a single JAR app (Spring Boot). You can run it with Java, or wrap it into a systemd service.
+
+### Install Java (if not already)
+
+```bash
+sudo apt update
+sudo apt install openjdk-17-jre -y
+```
+
+### Create a directory
+
+```bash
+sudo mkdir -p /opt/kafdrop
+cd /opt/kafdrop
+wget https://github.com/obsidiandynamics/kafdrop/releases/download/3.30.0/kafdrop-3.30.0.jar -O kafdrop.jar
+```
+
+---
+
+## 2. Create systemd service for Kafdrop
+
+`/etc/systemd/system/kafdrop.service`:
+
+```ini
+[Unit]
+Description=Kafdrop - Kafka Web UI
+After=network.target kafka.service
+
+[Service]
+User=www-data
+WorkingDirectory=/opt/kafdrop
+ExecStart=/usr/bin/java -jar kafdrop.jar \
+  --server.port=9000 \
+  --kafka.brokerConnect=127.0.0.1:9092
+Restart=always
+StandardOutput=syslog
+StandardError=syslog
+SyslogIdentifier=kafdrop
+
+[Install]
+WantedBy=multi-user.target
+```
+
+> 🔧 Change `--kafka.brokerConnect=127.0.0.1:9092` to your actual Kafka broker list if you run more than one.
+
+---
+
+## 3. Start Kafdrop
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable kafdrop
+sudo systemctl start kafdrop
+```
+
+Now Kafdrop is running on port **9000** internally.
+
+---
+
+## 4. Nginx reverse proxy
+
+Add this block to your nginx domain config (the same one serving React/Node/Flask):
+
+```nginx
+location /service/kafdrop/ {
+    proxy_pass http://127.0.0.1:9000/;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+}
+```
+
+Reload nginx:
+
+```bash
+sudo nginx -t
+sudo systemctl reload nginx
+```
+
+---
+
+## 5. Access
+
+Now you can open:
+
+```
+https://app.unpay.in/service/kafdrop/
+```
+
+and browse Kafka topics, consumer groups, partitions, etc.
+
+---
+
+## 6. Optional: Kafka UI (modern alternative)
+
+If you want a **nicer UI** than Kafdrop, there’s [Kafka UI](https://github.com/provectus/kafka-ui) (runs in Docker or standalone). It looks more polished and handles ACLs, multiple clusters, etc. The setup is similar: run it on some internal port (like 8080), then proxy with nginx at `/service/kafka-ui/`.
+
+---
+
+So now your stack looks like this:
+
+* `/` → React frontend
+* `/api/node/` → Node.js backend
+* `/api/py/` → Flask backend
+* `/service/grafana/` → Grafana dashboard
+* `/service/kafdrop/` → Kafka UI
+
+Everything routed by nginx, kept alive by systemd.
+
+Do you also want me to sketch the **firewall/ufw rules** you should set on this bare Ubuntu server so only nginx (ports 80/443) is exposed, while Node/Flask/Kafka/Grafana/Kafdrop stay private behind nginx?
