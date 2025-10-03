@@ -1,0 +1,92 @@
+Good — securing the bare Ubuntu box is just as important as wiring it up.
+Right now, Node (4001), Flask (5000), Kafka (9092), Grafana (3000), Kafdrop (9000) are running on internal ports. If left open, anyone can hit them directly, bypassing nginx.
+
+Here’s the **firewall (UFW) lockdown plan**:
+
+---
+
+## 1. Enable UFW
+
+If not already active:
+
+```bash
+sudo apt update
+sudo apt install ufw -y
+sudo ufw default deny incoming
+sudo ufw default allow outgoing
+```
+
+---
+
+## 2. Allow only essential ports
+
+Keep only **SSH** and **nginx** open to the world:
+
+```bash
+# SSH (replace 22 if you use a custom SSH port)
+sudo ufw allow 22/tcp
+
+# HTTP & HTTPS
+sudo ufw allow 80/tcp
+sudo ufw allow 443/tcp
+```
+
+---
+
+## 3. Block backend ports from the outside
+
+Do **not** allow Node, Flask, Kafka, Grafana, or Kafdrop ports externally.
+Since UFW defaults to `deny incoming`, you don’t need explicit deny rules — just **don’t add `allow`**.
+
+So only nginx can talk to them locally (`127.0.0.1:PORT`), and they’re invisible from the internet.
+
+---
+
+## 4. (Optional) Restrict Kafka broker
+
+Kafka often binds to `0.0.0.0:9092` by default. Lock it to localhost so only internal apps & Kafdrop can reach it.
+
+Edit your Kafka server config (usually `/etc/kafka/server.properties`):
+
+```properties
+listeners=PLAINTEXT://127.0.0.1:9092
+```
+
+Restart Kafka:
+
+```bash
+sudo systemctl restart kafka
+```
+
+---
+
+## 5. Enable UFW
+
+Once you’re sure SSH is allowed, enable:
+
+```bash
+sudo ufw enable
+sudo ufw status verbose
+```
+
+You should see:
+
+```
+22/tcp   ALLOW Anywhere
+80/tcp   ALLOW Anywhere
+443/tcp  ALLOW Anywhere
+```
+
+That’s it — your backend ports are now shielded.
+
+---
+
+✅ Final flow:
+
+* Internet → Nginx → (reverse proxy to internal ports)
+* Node/Flask/Kafka/Grafana/Kafdrop only accessible locally (`127.0.0.1`)
+* UFW firewall ensures **only ports 22, 80, 443** are exposed externally
+
+---
+
+Do you also want me to give you a **single nginx config template** combining React, Node, Flask, Grafana, and Kafdrop with SSL redirection included, so you can just drop it in `/etc/nginx/sites-available/app.unpay.in`?
