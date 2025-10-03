@@ -1,0 +1,118 @@
+Alright — let’s make Kafka and Grafana play nicely alongside Node and Flask. The trick with these “heavier” services is that they’re usually installed from upstream packages or tarballs, but the **systemd unit files** follow the same pattern as what we wrote for Node and Flask.
+
+---
+
+## 1. Kafka with systemd
+
+Kafka depends on **ZooKeeper** (unless you’re on Kafka 3.5+ in KRaft mode). Most Ubuntu tutorials still set it up with ZooKeeper, so I’ll show both pieces.
+
+### ZooKeeper service (`/etc/systemd/system/zookeeper.service`):
+
+```ini
+[Unit]
+Description=Apache Zookeeper server
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/opt/kafka/bin/zookeeper-server-start.sh /opt/kafka/config/zookeeper.properties
+ExecStop=/opt/kafka/bin/zookeeper-server-stop.sh
+Restart=on-abnormal
+User=kafka
+
+[Install]
+WantedBy=multi-user.target
+```
+
+### Kafka service (`/etc/systemd/system/kafka.service`):
+
+```ini
+[Unit]
+Description=Apache Kafka server
+After=zookeeper.service
+
+[Service]
+Type=simple
+ExecStart=/opt/kafka/bin/kafka-server-start.sh /opt/kafka/config/server.properties
+ExecStop=/opt/kafka/bin/kafka-server-stop.sh
+Restart=on-abnormal
+User=kafka
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Then:
+
+```bash
+sudo systemctl daemon-reexec
+sudo systemctl enable zookeeper kafka
+sudo systemctl start zookeeper kafka
+```
+
+Kafka will then be running on port `9092` (internal). You normally **don’t expose this through nginx** — clients connect directly. If you want a web UI (like **Kafdrop** or **Kafka UI**), you’d reverse proxy *that* instead.
+
+---
+
+## 2. Grafana with systemd
+
+Grafana is easier because it ships its own systemd service if installed via APT.
+
+### Install Grafana (APT repo way):
+
+```bash
+sudo apt install -y apt-transport-https software-properties-common
+sudo mkdir -p /etc/apt/keyrings/
+wget -q -O - https://packages.grafana.com/gpg.key | sudo gpg --dearmor -o /etc/apt/keyrings/grafana.gpg
+echo "deb [signed-by=/etc/apt/keyrings/grafana.gpg] https://packages.grafana.com/oss/deb stable main" | sudo tee /etc/apt/sources.list.d/grafana.list
+sudo apt update
+sudo apt install grafana -y
+```
+
+### Enable Grafana service:
+
+```bash
+sudo systemctl enable grafana-server
+sudo systemctl start grafana-server
+```
+
+Grafana will be available on port `3000`.
+
+---
+
+## 3. Nginx reverse proxy for Grafana
+
+Add this to your nginx `server {}` (the same one that handles React/Node/Python):
+
+```nginx
+location /service/grafana/ {
+    proxy_pass http://127.0.0.1:3000/;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+}
+```
+
+Then reload nginx:
+
+```bash
+sudo nginx -t
+sudo systemctl reload nginx
+```
+
+Now `https://app.unpay.in/service/grafana/` will open the Grafana dashboard.
+
+---
+
+## 4. Where logs live
+
+* Kafka logs: `/opt/kafka/logs/`
+* ZooKeeper logs: `/opt/kafka/logs/zookeeper.log`
+* Grafana logs: `/var/log/grafana/grafana.log`
+* systemd tail: `journalctl -u kafka -f`, `journalctl -u grafana-server -f`
+
+---
+
+With this, all your services (Node, Flask, Kafka, Grafana) will **survive reboots, run in background, and be reverse-proxied by nginx** where needed.
+
+Would you like me to also sketch a **Kafdrop (Kafka web UI) setup with nginx proxy** so you can view Kafka topics and brokers via browser, just like Grafana?
