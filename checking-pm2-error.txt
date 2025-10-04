@@ -1,0 +1,76 @@
+You can check your Node/Express app’s errors and logs from **PM2** using a few handy commands. Here’s the breakdown:
+
+---
+
+### 🧩 1. Check live logs (real-time)
+
+```bash
+pm2 logs unpay-node
+```
+
+This shows both `stdout` (normal logs) and `stderr` (errors) live — like watching the console output when you run `node index.js`.
+
+To view only errors:
+
+```bash
+pm2 logs unpay-node --err
+```
+
+To stop viewing, press **Ctrl + C**.
+
+---
+
+### 🗂 2. View saved logs (without live tail)
+
+PM2 saves logs by default under:
+
+```
+~/.pm2/logs/
+```
+
+So you can manually open them:
+
+```bash
+cd ~/.pm2/logs
+ls
+cat unpay-node-error.log
+cat unpay-node-out.log
+```
+
+Or to read them nicely:
+
+```bash
+tail -n 50 ~/.pm2/logs/unpay-node-error.log
+```
+
+---
+
+### ⚙️ 3. Inspect process details
+
+```bash
+pm2 describe unpay-node
+```
+
+This shows:
+
+* Path to the script
+* Working directory
+* Environment variables
+* Log file paths
+* Status, memory, etc.
+
+---
+
+### 🧠 Tip
+
+If you’re debugging startup crashes, it helps to **restart with logs open**:
+
+```bash
+pm2 restart unpay-node && pm2 logs unpay-node
+```
+
+That way you see the error as soon as it happens.
+
+---
+
+Would you like me to show you how to **configure PM2 to write logs to a custom path**, for easier reading and backup (for example inside your project `/var/www/vhosts/admin.unpay.in/multi/backend/node-express/logs`)?
